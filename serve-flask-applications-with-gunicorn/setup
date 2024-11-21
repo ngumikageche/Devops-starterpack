@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# Variables
+FLASK_APP_DIR="/var/www/myflaskapp"
+VIRTUALENV_DIR="$FLASK_APP_DIR/venv"
+GUNICORN_SERVICE="/etc/systemd/system/gunicorn.service"
+NGINX_CONF="/etc/nginx/sites-available/myflaskapp"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/myflaskapp"
+
+# Step 1: Update and upgrade the system
+echo "Updating and upgrading the system..."
+sudo apt update && sudo apt upgrade -y
+
+# Step 2: Install system dependencies
+echo "Installing system dependencies..."
+sudo apt install -y python3-pip python3-dev nginx virtualenv git curl
+
+# Step 3: Clone or create the Flask app (for demonstration purposes, clone from GitHub)
+echo "Cloning the Flask app repository..."
+sudo git clone https://github.com/yourusername/yourflaskapp.git $FLASK_APP_DIR
+
+# Step 4: Set up a virtual environment
+echo "Setting up the virtual environment..."
+cd $FLASK_APP_DIR
+python3 -m venv $VIRTUALENV_DIR
+source $VIRTUALENV_DIR/bin/activate
+
+# Step 5: Install Flask and Gunicorn
+echo "Installing Flask and Gunicorn..."
+pip install -r $FLASK_APP_DIR/requirements.txt
+pip install gunicorn
+
+# Step 6: Test the Flask app locally
+echo "Testing the Flask app with Gunicorn..."
+gunicorn --bind 0.0.0.0:8000 wsgi:app &
+
+# Step 7: Set up Gunicorn as a service
+echo "Setting up Gunicorn service..."
+sudo bash -c "cat > $GUNICORN_SERVICE << EOF
+[Unit]
+Description=gunicorn daemon for Flask app
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=$FLASK_APP_DIR
+ExecStart=$VIRTUALENV_DIR/bin/gunicorn --workers 3 --bind unix:$FLASK_APP_DIR/myflaskapp.sock wsgi:app
+
+[Install]
+WantedBy=multi-user.target
+EOF"
+
+# Step 8: Enable and start the Gunicorn service
+echo "Enabling and starting Gunicorn service..."
+sudo systemctl start gunicorn
+sudo systemctl enable gunicorn
+
+# Step 9: Set up Nginx for reverse proxy
+echo "Setting up Nginx configuration..."
+sudo bash -c "cat > $NGINX_CONF << EOF
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    location / {
+        proxy_pass http://unix:$FLASK_APP_DIR/myflaskapp.sock;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF"
+
+# Step 10: Enable Nginx site and restart Nginx
+echo "Enabling Nginx site and restarting Nginx..."
+sudo ln -s $NGINX_CONF $NGINX_SITE_LINK
+sudo systemctl restart nginx
+
+# Step 11: Open ports 80 and 443 on the firewall
+echo "Configuring firewall to allow Nginx traffic..."
+sudo ufw allow 'Nginx Full'
+
+# Step 12: Verify services
+echo "Verifying Gunicorn and Nginx services..."
+sudo systemctl status gunicorn
+sudo systemctl status nginx
+
+echo "Flask application is now being served via Gunicorn and Nginx."
+
